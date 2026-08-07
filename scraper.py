@@ -12,9 +12,18 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+import config
+
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 TIMEOUT = 15
+
+
+def _proxies():
+    """Build the requests proxies dict from config.PROXY (None if disabled)."""
+    if not config.PROXY:
+        return None
+    return {"http": config.PROXY, "https": config.PROXY}
 
 
 def _meta_content(soup, *selectors):
@@ -28,7 +37,8 @@ def _meta_content(soup, *selectors):
 def fetch_metadata(url):
     """Return (title, description). Falls back gracefully on any error."""
     try:
-        resp = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": UA})
+        resp = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": UA},
+                            proxies=_proxies())
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
     except requests.RequestException:

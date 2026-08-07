@@ -1,0 +1,21 @@
+# HTTP proxy used when fetching link metadata (fetching the URL's title/description).
+# The bot routes its link fetches through this proxy. Set to an empty value
+# (proxy: "") to disable proxying.
+proxy: http://127.0.0.1:2080
+
+# Per-user rate limits.
+# ADMIN_USER_ID (set in .env, gitignored) is exempt from all of these.
+# per units: minute | hour | day | week
+limits:
+  # Creating new playlists (/new, and auto-creating the "default" playlist).
+  playlist_create:
+    max: 20
+    per: day
+  # Adding a saved link (item) to a playlist.
+  item_create:
+    max: 100
+    per: day
+  # Any bot command sent by a user.
+  commands:
+    max: 300
+    per: hour

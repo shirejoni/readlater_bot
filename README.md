@@ -13,12 +13,48 @@ remove it.
    ```bash
    pip install -r requirements.txt
    ```
-3. Run it:
+3. Copy `.env.example` to `.env` and fill in your values (the real `.env` is
+   gitignored):
    ```bash
-   BALE_TOKEN=<your-token> python3 bot.py
+   cp .env.example .env
    ```
-   - Optional: set `BALE_OWNER_ID=<numeric id>` to only let a single user use it.
-   - Data is stored in a local `readlater.db` (SQLite) file next to the bot.
+   ```bash
+   BALE_TOKEN=<your-token>
+   ADMIN_USER_ID=            # optional: admin user id, exempt from all limits
+   ```
+4. Run it:
+   ```bash
+   python3 bot.py
+   ```
+
+- Data is stored in a local `readlater.db` (SQLite) file next to the bot.
+
+## Fetching links through a proxy
+
+When the bot scrapes a link's title/description it routes the request through an
+HTTP proxy read from `config.yaml` (`proxy:`), default `http://127.0.0.1:2080`.
+Set `proxy: ""` in `config.yaml` to disable proxying.
+
+## Multi-user
+
+Anyone who messages the bot gets their **own** playlists and items — nothing is
+shared between users. Data is scoped per user id (not per chat), so two users in
+the same group chat still keep separate libraries.
+
+## Rate limits
+
+Each user has per-user rate limits, defined in `config.yaml` (committed, edit to
+adjust the defaults):
+
+| Bucket | What it covers | Default |
+|---|---|---|
+| `playlist_create` | creating playlists (`/new`, auto "default") | 20 / day |
+| `item_create` | adding saved links | 100 / day |
+| `commands` | any bot command | 300 / hour |
+
+`per` units: `minute`, `hour`, `day`, `week`. Limits are recorded in the DB, so a
+daily window survives a restart. The **admin** (`ADMIN_USER_ID` in `.env`) is
+exempt from all limits.
 
 ## Commands
 
@@ -44,7 +80,9 @@ remove it.
 
 ## Files
 
-- `bot.py` — polling loop, command & button routing
+- `bot.py` — polling loop, command & button routing, rate-limit enforcement
 - `bale.py` — thin Bale HTTP API client
-- `db.py` — SQLite schema + queries
+- `db.py` — SQLite schema + queries (incl. `rate_events` table)
 - `scraper.py` — link title/description extraction
+- `config.py` — loads `.env` (secrets) + `config.yaml` (limits)
+- `limits.py` — SQLite-backed sliding-window rate limiter

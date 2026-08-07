@@ -1,0 +1,23 @@
+[Unit]
+Description=Bale Read-Later bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shirejoni
+Group=shirejoni
+WorkingDirectory=/home/shirejoni/ravan/readlater_bot
+# Secrets (BALE_TOKEN, ADMIN_USER_ID) are read from ./.env inside WorkingDirectory.
+# The bot uses an HTTP proxy from config.yaml (default http://127.0.0.1:2080)
+# when fetching link metadata.
+ExecStart=/home/shirejoni/ravan/readlater_bot/run.sh
+Restart=always
+RestartSec=5
+
+# Optional hardening: give the bot only what it needs.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS comments (
     text TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rate_events (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_user
+    ON rate_events(user_id, bucket, ts);
 """
 
 

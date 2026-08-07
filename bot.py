@@ -4,21 +4,23 @@
 مسیردهی می‌کند و همه‌چیز را در SQLite ذخیره می‌کند (ببینید db.py).
 
 اجرا:
-    BALE_TOKEN=<token> python3 bot.py
-اختیاری: BALE_OWNER_ID=<شناسه عددی> را بگذارید تا فقط یک کاربر اجازه استفاده داشته باشد.
+    python3 bot.py   (token را در فایل .env بگذارید: BALE_TOKEN=...)
+هر کاربر داده‌ی جدا و محدودیت نرخ خودش را دارد (config.yaml). مدیر
+(ADMIN_USER_ID در فایل .env) از همه محدودیت‌ها معاف است.
 """
-import os
 import re
 import time
 
 import bale
+import config
 import db
+import limits
 
 URL_RE = re.compile(r"https?://[^\s]+")
 
-# حالت حافظه هر چت (دائمی نیست): پلی‌لیست فعال و چیزی که منتظر آن هستیم (مثلاً متن نظر).
-ACTIVE = {}     # chat_id -> playlist_id
-PENDING = {}    # chat_id -> (kind, item_id)  مثل ('comment', 5)
+# حالت حافظه هر کاربر (دائمی نیست): پلی‌لیست فعال و چیزی که منتظر آن هستیم (مثلاً متن نظر).
+ACTIVE = {}     # user_id -> playlist_id
+PENDING = {}    # user_id -> (kind, item_id)  مثل ('comment', 5)
 
 HELP = (
     "*ربات «بعداً بخوانم»* 📚\n\n"
@@ -83,14 +85,14 @@ def item_text(item, index=None):
     return "\n".join(lines)
 
 
-def playlist_listing(conn, chat_id):
-    pls = db.list_playlists(conn, chat_id)
+def playlist_listing(conn, user_id):
+    pls = db.list_playlists(conn, user_id)
     if not pls:
         return "هنوز پلی‌لیستی ندارید. با */new <نام>* بسازید.", None
     rows = []
     for pl in pls:
         n = len(db.list_items(conn, pl["id"]))
-        active = " 👈" if ACTIVE.get(chat_id) == pl["id"] else ""
+        active = " 👈" if ACTIVE.get(user_id) == pl["id"] else ""
         rows.append([{"text": f"{pl['name']} ({n}){active}",
                       "callback_data": f"openpl:{pl['id']}"}])
     return "*پلی‌لیست‌های شما:*", {"inline_keyboard": rows}
@@ -112,20 +114,15 @@ def list_playlist_items(conn, chat_id, pl):
 
 # ---------- مدیریت پیام و رویدادها ----------
 
-def allowed(from_id):
-    owner = os.environ.get("BALE_OWNER_ID")
-    if not owner:
-        return True  # به‌طور پیش‌فرض فقط تک‌کاربره در هر چت
-    return str(from_id) == owner
-
-
 def handle_message(conn, msg):
-    chat_id = msg["chat"]["id"]
+    chat_id = msg["chat"]["id"]            # جایی که پاسخ می‌دهیم
     text = msg.get("text") or ""
+    from_id = (msg.get("from") or {}).get("id")
+    user_id = str(from_id) if from_id is not None else str(chat_id)
 
     # گرفتن متن نظرِ منتظر، اولویت بالاتر از همه دارد.
-    if chat_id in PENDING:
-        kind, item_id = PENDING.pop(chat_id)
+    if user_id in PENDING:
+        kind, item_id = PENDING.pop(user_id)
         body = text.strip()
         if not body:
             bale.send_message(chat_id, "نظر خالی نادیده گرفته شد.")
@@ -134,23 +131,17 @@ def handle_message(conn, msg):
             db.add_comment(conn, "item", item_id, body)
         elif kind == "plc":
             db.add_comment(conn, "playlist", item_id, body)
-        pid = ACTIVE.get(chat_id)
+        pid = ACTIVE.get(user_id)
         if pid and kind == "comment":
-            pl = db.get_playlist_by_id(conn, chat_id, pid)
+            pl = db.get_playlist_by_id(conn, user_id, pid)
             list_playlist_items(conn, chat_id, pl)
         else:
             bale.send_message(chat_id, "نظر ذخیره شد ✅")
         return
 
-    # بررسی مجوز مالک.
-    from_id = (msg.get("from") or {}).get("id")
-    if not allowed(from_id):
-        bale.send_message(chat_id, "شما اجازه استفاده از این ربات را ندارید.")
-        return
-
     # دستورها.
     if text.startswith("/"):
-        handle_command(conn, chat_id, text)
+        handle_command(conn, chat_id, user_id, text)
         return
 
     # در غیر این صورت هر پیام حاوی URL ذخیره می‌شود.
@@ -159,13 +150,36 @@ def handle_message(conn, msg):
         bale.send_message(chat_id, "یک لینک (*https://...*) بفرستید تا ذخیره کنم، "
                                    "یا /help برای راهنما.")
         return
-    save_link(conn, chat_id, m.group(0))
+    save_link(conn, chat_id, user_id, m.group(0))
 
 
-def handle_command(conn, chat_id, text):
+def _limited(conn, chat_id, user_id, bucket):
+    """اعمال محدودیت نرخ برای یک کاربر. True اگر انجام کار مجاز است."""
+    if config.is_admin(user_id):
+        return True
+    spec = config.LIMITS.get(bucket)
+    if not spec:
+        return True
+    ok, reason = limits.check(conn, user_id, bucket,
+                              spec.get("max", 0), spec.get("per", "day"))
+    if ok:
+        return True
+    n, unit = reason
+    bale.send_message(
+        chat_id,
+        f"به حد مجاز رسیدید: حداکثر {n} بار در هر {unit} برای این کار. "
+        "کمی بعد دوباره تلاش کنید.")
+    return False
+
+
+def handle_command(conn, chat_id, user_id, text):
     cmd, _, rest = text.partition(" ")
     cmd = cmd.lower()
     rest = rest.strip()
+
+    # هر دستوری به‌صورت جداگانه محدود می‌شود (مدیر معاف است).
+    if not _limited(conn, chat_id, user_id, "commands"):
+        return
 
     if cmd == "/start":
         bale.send_message(chat_id, HELP)
@@ -175,20 +189,22 @@ def handle_command(conn, chat_id, text):
         if not rest:
             bale.send_message(chat_id, "کاربرد: */new <نام>*")
             return
+        if not _limited(conn, chat_id, user_id, "playlist_create"):
+            return
         try:
-            db.create_playlist(conn, str(chat_id), rest)
+            db.create_playlist(conn, user_id, rest)
         except Exception:
             bale.send_message(chat_id, "پلی‌لیستی با این نام وجود دارد.")
             return
-        ACTIVE[chat_id] = db.get_playlist(conn, str(chat_id), rest)["id"]
+        ACTIVE[user_id] = db.get_playlist(conn, user_id, rest)["id"]
         bale.send_message(chat_id, f"پلی‌لیست */{md(rest)}* ساخته و باز شد.")
     elif cmd == "/playlists":
-        header, markup = playlist_listing(conn, str(chat_id))
+        header, markup = playlist_listing(conn, user_id)
         bale.send_message(chat_id, header, reply_markup=markup)
     elif cmd == "/open":
-        open_playlist(conn, chat_id, rest)
+        open_playlist(conn, chat_id, user_id, rest)
     elif cmd == "/list":
-        pl = current_playlist(conn, chat_id)
+        pl = current_playlist(conn, chat_id, user_id)
         if pl:
             list_playlist_items(conn, chat_id, pl)
     elif cmd in ("/add", "/save"):
@@ -199,21 +215,21 @@ def handle_command(conn, chat_id, text):
         if not m:
             bale.send_message(chat_id, "در این پیام لینکی پیدا نکردم.")
             return
-        save_link(conn, chat_id, m.group(0))
+        save_link(conn, chat_id, user_id, m.group(0))
     elif cmd == "/delpl":
         if not rest:
             bale.send_message(chat_id, "کاربرد: */delpl <نام>*")
             return
-        ok = db.delete_playlist(conn, str(chat_id), rest)
-        if ok and ACTIVE.get(chat_id) is not None:
-            ACTIVE.pop(chat_id, None)
+        ok = db.delete_playlist(conn, user_id, rest)
+        if ok and ACTIVE.get(user_id) is not None:
+            ACTIVE.pop(user_id, None)
         bale.send_message(chat_id, "حذف شد ✅" if ok else "پلی‌لیست پیدا نشد.")
     elif cmd == "/plc":
         name, _, body = rest.partition(" ")
         if not name or not body:
             bale.send_message(chat_id, "کاربرد: */plc <نام> <متن>*")
             return
-        pl = db.get_playlist(conn, str(chat_id), name)
+        pl = db.get_playlist(conn, user_id, name)
         if not pl:
             bale.send_message(chat_id, "پلی‌لیست پیدا نشد.")
             return
@@ -224,7 +240,7 @@ def handle_command(conn, chat_id, text):
         if not iid or not body:
             bale.send_message(chat_id, "کاربرد: */pc <شناسه> <متن>*")
             return
-        if not db.get_item(conn, str(chat_id), int(iid)):
+        if not db.get_item(conn, user_id, int(iid)):
             bale.send_message(chat_id, "لینک پیدا نشد.")
             return
         db.add_comment(conn, "item", int(iid), body)
@@ -235,44 +251,52 @@ def handle_command(conn, chat_id, text):
         bale.send_message(chat_id, "دستور ناشناخته است. /help را ببینید.")
 
 
-def current_playlist(conn, chat_id):
-    pid = ACTIVE.get(chat_id)
+def current_playlist(conn, chat_id, user_id):
+    pid = ACTIVE.get(user_id)
     if pid is None:
         bale.send_message(chat_id, "پلی‌لیست فعالی ندارید. از */open <نام>* یا "
                                    "*/new <نام>* استفاده کنید.")
         return None
-    pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+    pl = db.get_playlist_by_id(conn, user_id, pid)
     if not pl:
-        ACTIVE.pop(chat_id, None)
+        ACTIVE.pop(user_id, None)
         bale.send_message(chat_id, "پلی‌لیست فعال دیگر وجود ندارد.")
         return None
     return pl
 
 
-def open_playlist(conn, chat_id, name):
+def open_playlist(conn, chat_id, user_id, name):
     if not name:
         bale.send_message(chat_id, "کاربرد: */open <نام>*")
         return
-    pl = db.get_playlist(conn, str(chat_id), name)
+    pl = db.get_playlist(conn, user_id, name)
     if not pl:
         bale.send_message(chat_id, "پلی‌لیست پیدا نشد. */playlists* را ببینید.")
         return
-    ACTIVE[chat_id] = pl["id"]
+    ACTIVE[user_id] = pl["id"]
     list_playlist_items(conn, chat_id, pl)
 
 
-def save_link(conn, chat_id, url):
-    pl = current_playlist(conn, chat_id)
+def save_link(conn, chat_id, user_id, url):
+    # محدودیت افزودن لینک (مدیر معاف است).
+    if not _limited(conn, chat_id, user_id, "item_create"):
+        return
+
+    pl = current_playlist(conn, chat_id, user_id)
     if pl is None:  # پلی‌لیست فعال نبود -> پلی‌لیست «پیش‌فرض» بساز
-        pid = db.create_playlist(conn, str(chat_id), "default")
-        ACTIVE[chat_id] = pid
-        pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+        if not _limited(conn, chat_id, user_id, "playlist_create"):
+            bale.send_message(chat_id, "برای ذخیره یک پلی‌لیست محلی باز کنید "
+                                       "(حد مجاز ساختن پلی‌لیست رسیده است).")
+            return
+        pid = db.create_playlist(conn, user_id, "default")
+        ACTIVE[user_id] = pid
+        pl = db.get_playlist_by_id(conn, user_id, pid)
 
     bale.send_message(chat_id, "در حال دریافت اطلاعات…")
     title, description = scraper_fetch(url)
-    item_id = db.add_item(conn, str(chat_id), pl["id"], url,
+    item_id = db.add_item(conn, user_id, pl["id"], url,
                           title=title, description=description)
-    item = db.get_item(conn, str(chat_id), item_id)
+    item = db.get_item(conn, user_id, item_id)
     bale.send_message(chat_id,
                       f"در *{md(pl['name'])}* ذخیره شد ✅\n\n{item_text(item)}",
                       reply_markup=item_markup(item))
@@ -294,6 +318,8 @@ def show_comments_help(chat_id):
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
     message_id = cb["message"]["message_id"]
+    from_id = (cb.get("from") or {}).get("id")
+    user_id = str(from_id) if from_id is not None else str(chat_id)
     data = cb["data"]
     parts = data.split(":")
 
@@ -303,8 +329,8 @@ def handle_callback(cb):
 
     if action == "openpl":
         pid = int(parts[1])
-        ACTIVE[chat_id] = pid
-        pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+        ACTIVE[user_id] = pid
+        pl = db.get_playlist_by_id(conn, user_id, pid)
         if pl:
             list_playlist_items(conn, chat_id, pl)
         bale.answer_callback_query(cb["id"])
@@ -316,7 +342,7 @@ def handle_callback(cb):
         bale.answer_callback_query(cb["id"], "لینک نامعتبر.")
         return
 
-    item = db.get_item(conn, str(chat_id), item_id)
+    item = db.get_item(conn, user_id, item_id)
     if not item:
         bale.answer_callback_query(cb["id"], "لینک دیگر وجود ندارد.")
         return
@@ -326,13 +352,13 @@ def handle_callback(cb):
     elif action == "st" and len(parts) == 3:
         db.update_item_status(conn, item_id, parts[2])
     elif action == "remove":
-        db.delete_item(conn, str(chat_id), item_id)
+        db.delete_item(conn, user_id, item_id)
         bale.edit_message_text(chat_id, message_id, "*حذف شد* 🗑",
                                reply_markup={"inline_keyboard": []})
         bale.answer_callback_query(cb["id"], "حذف شد.")
         return
     elif action == "comment":
-        PENDING[chat_id] = ("comment", item_id)
+        PENDING[user_id] = ("comment", item_id)
         bale.send_message(chat_id,
                           f"متن نظر برای #{item_id} (عنوان: "
                           f"*{md(item['title'] or item['url'])}*) را بفرستید:")
@@ -340,7 +366,7 @@ def handle_callback(cb):
         return
 
     # بازنشانی کارت با وضعیت جدید.
-    item = db.get_item(conn, str(chat_id), item_id)
+    item = db.get_item(conn, user_id, item_id)
     bale.edit_message_text(chat_id, message_id, item_text(item),
                            reply_markup=item_markup(item))
     bale.answer_callback_query(cb["id"])
