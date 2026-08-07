@@ -1,0 +1,380 @@
+"""ربات «بعداً بخوانم» برای پیام‌رسان بله — نقطه ورود اصلی.
+
+از getUpdates بله با long polling استفاده می‌کند، دستورها و دکمه‌های کلیکی را
+مسیردهی می‌کند و همه‌چیز را در SQLite ذخیره می‌کند (ببینید db.py).
+
+اجرا:
+    BALE_TOKEN=<token> python3 bot.py
+اختیاری: BALE_OWNER_ID=<شناسه عددی> را بگذارید تا فقط یک کاربر اجازه استفاده داشته باشد.
+"""
+import os
+import re
+import time
+
+import bale
+import db
+
+URL_RE = re.compile(r"https?://[^\s]+")
+
+# حالت حافظه هر چت (دائمی نیست): پلی‌لیست فعال و چیزی که منتظر آن هستیم (مثلاً متن نظر).
+ACTIVE = {}     # chat_id -> playlist_id
+PENDING = {}    # chat_id -> (kind, item_id)  مثل ('comment', 5)
+
+HELP = (
+    "*ربات «بعداً بخوانم»* 📚\n\n"
+    "*ذخیره لینک* — هر پیامی که URL داشته باشد بفرستید (یا */add <url>*) تا "
+    "عنوان و توضیح آن را استخراج کنم و در پلی‌لیست فعال ذخیره کنم.\n\n"
+    "*پلی‌لیست‌ها*\n"
+    "/new <نام> — ساخت پلی‌لیست\n"
+    "/playlists — فهرست پلی‌لیست‌ها\n"
+    "/open <نام> — فعال کردن و نمایش لینک‌های یک پلی‌لیست\n"
+    "/list — نمایش لینک‌های پلی‌لیست فعال\n"
+    "/delpl <نام> — حذف پلی‌لیست\n\n"
+    "*نظرها*\n"
+    "/plc <نام> <متن> — نظر روی پلی‌لیست\n"
+    "/pc <شناسه> <متن> — نظر روی یک لینک\n\n"
+    "هر لینک دکمه دارد: پین، وضعیت (خوانده شد / در حال خواندن / خوانده نشده)، "
+    "نظر، حذف و باز کردن.\n"
+    "مرتب‌سازی: قدیمی‌تر اول؛ لینک‌های پین‌شده بالاترند."
+)
+
+
+def md(text):
+    """escape کردن چند کاراکتر خاص markdown پیش از قرار گرفتن در متن."""
+    return text.replace("\\", "").replace("*", "\\*").replace("_", "\\_") \
+               .replace("[", "\\[").replace("]", "\\]")
+
+
+# ---------- رندر ----------
+
+def status_label(status):
+    return {"unread": "⬜ خوانده نشده", "in_progress": "🔁 در حال خواندن",
+            "done": "✅ خوانده شد"}.get(status, status)
+
+
+def item_markup(item):
+    """دکمه‌های هر لینک — حداکثر دو ستون در هر ردیف."""
+    pin = "📌 برداشتن پین" if item["pinned"] else "📌 پین"
+    return {
+        "inline_keyboard": [
+            [{"text": pin, "callback_data": f"pin:{item['id']}"},
+             {"text": "✅ خوانده شد",
+              "callback_data": f"st:{item['id']}:done"}],
+            [{"text": "🔁 در حال خواندن",
+              "callback_data": f"st:{item['id']}:in_progress"},
+             {"text": "⬜ خوانده نشده",
+              "callback_data": f"st:{item['id']}:unread"}],
+            [{"text": "💬 نظر", "callback_data": f"comment:{item['id']}"},
+             {"text": "🗑 حذف", "callback_data": f"remove:{item['id']}"}],
+            [{"text": "🔗 باز کردن", "url": item["url"]}],
+        ]
+    }
+
+
+def item_text(item, index=None):
+    idx = f"[{index}] " if index else ""
+    lines = [f"*{md(item['title'] or item['url'])}*"]
+    if item["description"]:
+        lines.append(md(item["description"]))
+    lines.append(md(item["url"]))
+    lines.append(f"#{item['id']} · {status_label(item['status'])}"
+                 f"{' · 📌 پین‌شده' if item['pinned'] else ''}"
+                 f" · اضافه: {item['added_at'][:10]} · {idx.strip()}")
+    return "\n".join(lines)
+
+
+def playlist_listing(conn, chat_id):
+    pls = db.list_playlists(conn, chat_id)
+    if not pls:
+        return "هنوز پلی‌لیستی ندارید. با */new <نام>* بسازید.", None
+    rows = []
+    for pl in pls:
+        n = len(db.list_items(conn, pl["id"]))
+        active = " 👈" if ACTIVE.get(chat_id) == pl["id"] else ""
+        rows.append([{"text": f"{pl['name']} ({n}){active}",
+                      "callback_data": f"openpl:{pl['id']}"}])
+    return "*پلی‌لیست‌های شما:*", {"inline_keyboard": rows}
+
+
+def list_playlist_items(conn, chat_id, pl):
+    items = db.list_items(conn, pl["id"])
+    header = f"*{md(pl['name'])}* — {len(items)} پیوند"
+    if pl.get("comment"):
+        header += f"\n📝 {md(pl['comment'])}"
+    bale.send_message(chat_id, header)
+    if not items:
+        bale.send_message(chat_id, "خالی است. برای افزودن یک لینک بفرستید.")
+        return
+    for i, item in enumerate(items, 1):
+        bale.send_message(chat_id, item_text(item, i),
+                          reply_markup=item_markup(item))
+
+
+# ---------- مدیریت پیام و رویدادها ----------
+
+def allowed(from_id):
+    owner = os.environ.get("BALE_OWNER_ID")
+    if not owner:
+        return True  # به‌طور پیش‌فرض فقط تک‌کاربره در هر چت
+    return str(from_id) == owner
+
+
+def handle_message(conn, msg):
+    chat_id = msg["chat"]["id"]
+    text = msg.get("text") or ""
+
+    # گرفتن متن نظرِ منتظر، اولویت بالاتر از همه دارد.
+    if chat_id in PENDING:
+        kind, item_id = PENDING.pop(chat_id)
+        body = text.strip()
+        if not body:
+            bale.send_message(chat_id, "نظر خالی نادیده گرفته شد.")
+            return
+        if kind == "comment":
+            db.add_comment(conn, "item", item_id, body)
+        elif kind == "plc":
+            db.add_comment(conn, "playlist", item_id, body)
+        pid = ACTIVE.get(chat_id)
+        if pid and kind == "comment":
+            pl = db.get_playlist_by_id(conn, chat_id, pid)
+            list_playlist_items(conn, chat_id, pl)
+        else:
+            bale.send_message(chat_id, "نظر ذخیره شد ✅")
+        return
+
+    # بررسی مجوز مالک.
+    from_id = (msg.get("from") or {}).get("id")
+    if not allowed(from_id):
+        bale.send_message(chat_id, "شما اجازه استفاده از این ربات را ندارید.")
+        return
+
+    # دستورها.
+    if text.startswith("/"):
+        handle_command(conn, chat_id, text)
+        return
+
+    # در غیر این صورت هر پیام حاوی URL ذخیره می‌شود.
+    m = URL_RE.search(text)
+    if not m:
+        bale.send_message(chat_id, "یک لینک (*https://...*) بفرستید تا ذخیره کنم، "
+                                   "یا /help برای راهنما.")
+        return
+    save_link(conn, chat_id, m.group(0))
+
+
+def handle_command(conn, chat_id, text):
+    cmd, _, rest = text.partition(" ")
+    cmd = cmd.lower()
+    rest = rest.strip()
+
+    if cmd == "/start":
+        bale.send_message(chat_id, HELP)
+    elif cmd == "/help":
+        bale.send_message(chat_id, HELP)
+    elif cmd == "/new":
+        if not rest:
+            bale.send_message(chat_id, "کاربرد: */new <نام>*")
+            return
+        try:
+            db.create_playlist(conn, str(chat_id), rest)
+        except Exception:
+            bale.send_message(chat_id, "پلی‌لیستی با این نام وجود دارد.")
+            return
+        ACTIVE[chat_id] = db.get_playlist(conn, str(chat_id), rest)["id"]
+        bale.send_message(chat_id, f"پلی‌لیست */{md(rest)}* ساخته و باز شد.")
+    elif cmd == "/playlists":
+        header, markup = playlist_listing(conn, str(chat_id))
+        bale.send_message(chat_id, header, reply_markup=markup)
+    elif cmd == "/open":
+        open_playlist(conn, chat_id, rest)
+    elif cmd == "/list":
+        pl = current_playlist(conn, chat_id)
+        if pl:
+            list_playlist_items(conn, chat_id, pl)
+    elif cmd in ("/add", "/save"):
+        if not rest:
+            bale.send_message(chat_id, "کاربرد: */add <url>*")
+            return
+        m = URL_RE.search(rest)
+        if not m:
+            bale.send_message(chat_id, "در این پیام لینکی پیدا نکردم.")
+            return
+        save_link(conn, chat_id, m.group(0))
+    elif cmd == "/delpl":
+        if not rest:
+            bale.send_message(chat_id, "کاربرد: */delpl <نام>*")
+            return
+        ok = db.delete_playlist(conn, str(chat_id), rest)
+        if ok and ACTIVE.get(chat_id) is not None:
+            ACTIVE.pop(chat_id, None)
+        bale.send_message(chat_id, "حذف شد ✅" if ok else "پلی‌لیست پیدا نشد.")
+    elif cmd == "/plc":
+        name, _, body = rest.partition(" ")
+        if not name or not body:
+            bale.send_message(chat_id, "کاربرد: */plc <نام> <متن>*")
+            return
+        pl = db.get_playlist(conn, str(chat_id), name)
+        if not pl:
+            bale.send_message(chat_id, "پلی‌لیست پیدا نشد.")
+            return
+        db.add_comment(conn, "playlist", pl["id"], body)
+        bale.send_message(chat_id, "نظر ذخیره شد ✅")
+    elif cmd == "/pc":
+        iid, _, body = rest.partition(" ")
+        if not iid or not body:
+            bale.send_message(chat_id, "کاربرد: */pc <شناسه> <متن>*")
+            return
+        if not db.get_item(conn, str(chat_id), int(iid)):
+            bale.send_message(chat_id, "لینک پیدا نشد.")
+            return
+        db.add_comment(conn, "item", int(iid), body)
+        bale.send_message(chat_id, "نظر ذخیره شد ✅")
+    elif cmd == "/comments":
+        show_comments_help(chat_id)
+    else:
+        bale.send_message(chat_id, "دستور ناشناخته است. /help را ببینید.")
+
+
+def current_playlist(conn, chat_id):
+    pid = ACTIVE.get(chat_id)
+    if pid is None:
+        bale.send_message(chat_id, "پلی‌لیست فعالی ندارید. از */open <نام>* یا "
+                                   "*/new <نام>* استفاده کنید.")
+        return None
+    pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+    if not pl:
+        ACTIVE.pop(chat_id, None)
+        bale.send_message(chat_id, "پلی‌لیست فعال دیگر وجود ندارد.")
+        return None
+    return pl
+
+
+def open_playlist(conn, chat_id, name):
+    if not name:
+        bale.send_message(chat_id, "کاربرد: */open <نام>*")
+        return
+    pl = db.get_playlist(conn, str(chat_id), name)
+    if not pl:
+        bale.send_message(chat_id, "پلی‌لیست پیدا نشد. */playlists* را ببینید.")
+        return
+    ACTIVE[chat_id] = pl["id"]
+    list_playlist_items(conn, chat_id, pl)
+
+
+def save_link(conn, chat_id, url):
+    pl = current_playlist(conn, chat_id)
+    if pl is None:  # پلی‌لیست فعال نبود -> پلی‌لیست «پیش‌فرض» بساز
+        pid = db.create_playlist(conn, str(chat_id), "default")
+        ACTIVE[chat_id] = pid
+        pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+
+    bale.send_message(chat_id, "در حال دریافت اطلاعات…")
+    title, description = scraper_fetch(url)
+    item_id = db.add_item(conn, str(chat_id), pl["id"], url,
+                          title=title, description=description)
+    item = db.get_item(conn, str(chat_id), item_id)
+    bale.send_message(chat_id,
+                      f"در *{md(pl['name'])}* ذخیره شد ✅\n\n{item_text(item)}",
+                      reply_markup=item_markup(item))
+
+
+def scraper_fetch(url):
+    from scraper import fetch_metadata  # import محلی تا شروع سریع باشد
+    return fetch_metadata(url)
+
+
+def show_comments_help(chat_id):
+    bale.send_message(
+        chat_id,
+        "نظرها:\n/pc <شناسه> <متن> — نظر روی یک لینک\n"
+        "/plc <پلی‌لیست> <متن> — نظر روی پلی‌لیست\n"
+        "یا از دکمه 💬 روی هر لینک استفاده کنید.")
+
+
+def handle_callback(cb):
+    chat_id = cb["message"]["chat"]["id"]
+    message_id = cb["message"]["message_id"]
+    data = cb["data"]
+    parts = data.split(":")
+
+    if len(parts) < 2:
+        return
+    action = parts[0]
+
+    if action == "openpl":
+        pid = int(parts[1])
+        ACTIVE[chat_id] = pid
+        pl = db.get_playlist_by_id(conn, str(chat_id), pid)
+        if pl:
+            list_playlist_items(conn, chat_id, pl)
+        bale.answer_callback_query(cb["id"])
+        return
+
+    try:
+        item_id = int(parts[1])
+    except ValueError:
+        bale.answer_callback_query(cb["id"], "لینک نامعتبر.")
+        return
+
+    item = db.get_item(conn, str(chat_id), item_id)
+    if not item:
+        bale.answer_callback_query(cb["id"], "لینک دیگر وجود ندارد.")
+        return
+
+    if action == "pin":
+        db.toggle_pin(conn, item_id)
+    elif action == "st" and len(parts) == 3:
+        db.update_item_status(conn, item_id, parts[2])
+    elif action == "remove":
+        db.delete_item(conn, str(chat_id), item_id)
+        bale.edit_message_text(chat_id, message_id, "*حذف شد* 🗑",
+                               reply_markup={"inline_keyboard": []})
+        bale.answer_callback_query(cb["id"], "حذف شد.")
+        return
+    elif action == "comment":
+        PENDING[chat_id] = ("comment", item_id)
+        bale.send_message(chat_id,
+                          f"متن نظر برای #{item_id} (عنوان: "
+                          f"*{md(item['title'] or item['url'])}*) را بفرستید:")
+        bale.answer_callback_query(cb["id"], "نظرتان را بنویسید.")
+        return
+
+    # بازنشانی کارت با وضعیت جدید.
+    item = db.get_item(conn, str(chat_id), item_id)
+    bale.edit_message_text(chat_id, message_id, item_text(item),
+                           reply_markup=item_markup(item))
+    bale.answer_callback_query(cb["id"])
+
+
+def handle_update(upd):
+    if "callback_query" in upd:
+        handle_callback(upd["callback_query"])
+    elif "message" in upd:
+        msg = upd["message"]
+        if msg.get("text") is None:
+            return
+        handle_message(conn, msg)
+
+
+def main():
+    global conn
+    conn = db.connect()
+    print("ربات آنلاین:", bale.get_me().get("username", "?"))
+    offset = None
+    while True:
+        try:
+            updates = bale.get_updates(offset=offset) or []
+        except Exception as e:
+            print(f"خطای دریافت: {e}")
+            time.sleep(3)
+            continue
+        for upd in updates:
+            offset = upd["update_id"] + 1
+            try:
+                handle_update(upd)
+            except Exception as e:
+                print(f"خطای پردازش: {e}")
+
+
+if __name__ == "__main__":
+    main()
