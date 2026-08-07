@@ -32,6 +32,7 @@ DEFAULT_LIMITS = {
     "commands": {"max": 300, "per": "hour"},
 }
 DEFAULT_PROXY = "http://127.0.0.1:2080"
+DEFAULT_BACKUP = {"enabled": True, "interval_hours": 24, "chat_id": ""}
 
 _RAW = None  # parsed config.yaml dict (parsed once, cached)
 
@@ -67,5 +68,22 @@ def load_proxy():
     return DEFAULT_PROXY
 
 
+def load_backup():
+    """Return the backup settings dict from config.yaml (falls back to default)."""
+    b = dict(DEFAULT_BACKUP)
+    for key, val in (_raw_config().get("backup") or {}).items():
+        if val is not None:
+            b[key] = val
+    return b
+
+
 LIMITS = load_limits()
 PROXY = load_proxy()
+BACKUP = load_backup()
+
+
+def backup_chat_id():
+    """Target chat for backups: config.chat_id, else ADMIN_USER_ID."""
+    if BACKUP.get("chat_id"):
+        return str(BACKUP["chat_id"])
+    return str(ADMIN_USER_ID) if ADMIN_USER_ID else None

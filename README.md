@@ -29,6 +29,19 @@ remove it.
 
 - Data is stored in a local `readlater.db` (SQLite) file next to the bot.
 
+## Backup
+
+Every `backup.interval_hours` (default `24`) the bot zips its SQLite DB and sends
+it to `backup.chat_id`. If `chat_id` is empty it defaults to `ADMIN_USER_ID`.
+Set `backup.enabled: false` in `config.yaml` to disable.
+
+```
+backup:
+  enabled: true
+  interval_hours: 24
+  chat_id: ""
+```
+
 ## Fetching links through a proxy
 
 When the bot scrapes a link's title/description it routes the request through an

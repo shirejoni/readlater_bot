@@ -3,6 +3,14 @@
 # (proxy: "") to disable proxying.
 proxy: http://127.0.0.1:2080
 
+# Periodic DB backup. Every interval_hours, the bot zips the SQLite DB and
+# sends it to chat_id. If chat_id is empty, it defaults to ADMIN_USER_ID.
+# Set enabled: false to turn backups off.
+backup:
+  enabled: true
+  interval_hours: 24
+  chat_id: ""
+
 # Per-user rate limits.
 # ADMIN_USER_ID (set in .env, gitignored) is exempt from all of these.
 # per units: minute | hour | day | week

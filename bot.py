@@ -12,6 +12,7 @@ import re
 import time
 
 import bale
+import backup
 import config
 import db
 import limits
@@ -385,6 +386,7 @@ def handle_update(upd):
 def main():
     global conn
     conn = db.connect()
+    backup.start_backup_scheduler()
     print("ربات آنلاین:", bale.get_me().get("username", "?"))
     offset = None
     while True:

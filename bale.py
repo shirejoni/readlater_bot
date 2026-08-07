@@ -79,6 +79,36 @@ def edit_message_reply_markup(chat_id, message_id, reply_markup, token=None):
         return None
 
 
+def send_document(chat_id, document, filename=None, caption=None, token=None):
+    """Upload and send a document.
+
+    `document` may be a local file path, or raw bytes (then `filename` is used).
+    Used for sending DB backup zips.
+    """
+    token = token or get_token()
+    url = BASE.format(token=token, method="sendDocument")
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+    close_file = False
+    if isinstance(document, (bytes, bytearray)):
+        files = {"document": (filename or "file", document, "application/zip")}
+    else:
+        files = {"document": open(document, "rb")}
+        close_file = True
+    try:
+        resp = requests.post(url, data=data, files=files, timeout=120)
+    finally:
+        if close_file:
+            files["document"].close()
+    j = resp.json()
+    if not j.get("ok"):
+        raise BaleError(
+            f"sendDocument failed: {j.get('error_code')} {j.get('description')}"
+        )
+    return j.get("result")
+
+
 def answer_callback_query(callback_query_id, text=None, token=None):
     params = {"callback_query_id": callback_query_id}
     if text:
