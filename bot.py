@@ -20,13 +20,16 @@ import limits
 URL_RE = re.compile(r"https?://[^\s]+")
 
 # حالت حافظه هر کاربر (دائمی نیست): پلی‌لیست فعال و چیزی که منتظر آن هستیم (مثلاً متن نظر).
-ACTIVE = {}     # user_id -> playlist_id
-PENDING = {}    # user_id -> (kind, item_id)  مثل ('comment', 5)
+ACTIVE = {}        # user_id -> playlist_id
+PENDING = {}       # user_id -> (kind, item_id)  مثل ('comment', 5) یا ('newpl', url)
+PENDING_LINKS = {} # user_id -> {token: url}  لینک‌های منتظر انتخاب پلی‌لیست (چندتایی)
+_TOKEN_SEQ = 0     # شمارنده برای ساخت token های لینک‌های منتظر
 
 HELP = (
     "*ربات «بعداً بخوانم»* 📚\n\n"
     "*ذخیره لینک* — هر پیامی که URL داشته باشد بفرستید (یا */add <url>*) تا "
-    "عنوان و توضیح آن را استخراج کنم و در پلی‌لیست فعال ذخیره کنم.\n\n"
+    "عنوان و توضیح آن را استخراج کنم؛ بعد پلی‌لیست مقصد را از فهرست انتخاب "
+    "می‌کنید (یا پلی‌لیست جدید می‌سازید).\n\n"
     "*پلی‌لیست‌ها*\n"
     "/new <نام> — ساخت پلی‌لیست\n"
     "/playlists — فهرست پلی‌لیست‌ها\n"
@@ -148,6 +151,19 @@ def handle_message(conn, msg):
         if not body:
             bale.send_message(chat_id, "نظر خالی نادیده گرفته شد.")
             return
+        if kind == "newpl":
+            if not _limited(conn, chat_id, user_id, "playlist_create"):
+                return
+            try:
+                pid = db.create_playlist(conn, user_id, body)
+            except Exception:
+                bale.send_message(chat_id, "پلی‌لیستی با این نام وجود دارد.")
+                return
+            ACTIVE[user_id] = pid
+            pl = db.get_playlist_by_id(conn, user_id, pid)
+            bale.send_message(chat_id, f"پلی‌لیست */{md(body)}* ساخته شد.")
+            save_to_playlist(conn, chat_id, user_id, item_id, pl)
+            return
         if kind == "comment":
             db.add_comment(conn, "item", item_id, body)
         elif kind == "plc":
@@ -166,12 +182,12 @@ def handle_message(conn, msg):
         return
 
     # در غیر این صورت هر پیام حاوی URL ذخیره می‌شود.
-    m = URL_RE.search(text)
-    if not m:
+    urls = URL_RE.findall(text)
+    if not urls:
         bale.send_message(chat_id, "یک لینک (*https://...*) بفرستید تا ذخیره کنم، "
                                    "یا /help برای راهنما.")
         return
-    save_link(conn, chat_id, user_id, m.group(0))
+    offer_save(conn, chat_id, user_id, urls)
 
 
 def _limited(conn, chat_id, user_id, bucket):
@@ -232,11 +248,11 @@ def handle_command(conn, chat_id, user_id, text):
         if not rest:
             bale.send_message(chat_id, "کاربرد: */add <url>*")
             return
-        m = URL_RE.search(rest)
-        if not m:
+        urls = URL_RE.findall(rest)
+        if not urls:
             bale.send_message(chat_id, "در این پیام لینکی پیدا نکردم.")
             return
-        save_link(conn, chat_id, user_id, m.group(0))
+        offer_save(conn, chat_id, user_id, urls)
     elif cmd == "/delpl":
         if not rest:
             bale.send_message(chat_id, "کاربرد: */delpl <نام>*")
@@ -298,20 +314,67 @@ def open_playlist(conn, chat_id, user_id, name):
     list_playlist_items(conn, chat_id, pl)
 
 
-def save_link(conn, chat_id, user_id, url):
+def _new_token():
+    global _TOKEN_SEQ
+    _TOKEN_SEQ += 1
+    return str(_TOKEN_SEQ)
+
+
+def _pick_keyboard(conn, user_id, pls, token):
+    """کیبورد انتخاب پلی‌لیست برای یک لینک؛ ژم داده‌ها token لینک + شناسه پلی‌لیست است."""
+    rows = []
+    for pl in pls:
+        n = len(db.list_items(conn, pl["id"]))
+        rows.append([{"text": f"{pl['name']} ({n})",
+                      "callback_data": f"pickpl:{token}:{pl['id']}"}])
+    rows.append([{"text": "➕ پلی‌لیست جدید", "callback_data": f"newpl:{token}"},
+                 {"text": "❌ انصراف", "callback_data": f"cancel:{token}"}])
+    return {"inline_keyboard": rows}
+
+
+def offer_save(conn, chat_id, user_id, urls):
+    """برای هر لینک، پیامی جدا با فهرست پلی‌لیست‌ها می‌فرستد.
+
+    چند لینک می‌توانند هم‌زمان در انتظار باشند و هرکدام جداگانه به پلی‌لیست
+    دلخواهش برود. token هر لینک داخل callback_data می‌رود تا همان لینک را
+    پیدا کنیم (URLها برای callback_data زیادی بلندند).
+    اگر پلی‌لیستی وجود نداشته باشد مستقیم در «پیش‌فرض» ذخیره می‌کند.
+    """
+    pls = db.list_playlists(conn, user_id)
+    pend = PENDING_LINKS.setdefault(user_id, {})
+    for url in urls:
+        if not pls:
+            save_to_playlist(conn, chat_id, user_id, url, None)
+            continue
+        token = _new_token()
+        pend[token] = url
+        short = url if len(url) <= 60 else url[:60] + "…"
+        bale.send_message(chat_id, "کدام پلی‌لیست؟\n" + short,
+                          reply_markup=_pick_keyboard(conn, user_id, pls, token))
+    if not pend:
+        PENDING_LINKS.pop(user_id, None)
+
+
+def save_to_playlist(conn, chat_id, user_id, url, pl):
+    """افزودن لینک به پلی‌لیست: محدودیت نرخ، دریافت اطلاعات، ذخیره و نمایش.
+
+    اگر pl None باشد (مثلاً هیچ پلی‌لیستی نداریم) در پلی‌لیست فعال یا در
+    «پیش‌فرض» ذخیره می‌کند (رفتار قبلی).
+    """
+    if pl is None:
+        pl = current_playlist(conn, chat_id, user_id)
+        if pl is None:  # پلی‌لیست فعال نبود -> پلی‌لیست «پیش‌فرض» بساز
+            if not _limited(conn, chat_id, user_id, "playlist_create"):
+                bale.send_message(chat_id, "برای ذخیره یک پلی‌لیست محلی باز کنید "
+                                           "(حد مجاز ساختن پلی‌لیست رسیده است).")
+                return
+            pid = db.create_playlist(conn, user_id, "default")
+            ACTIVE[user_id] = pid
+            pl = db.get_playlist_by_id(conn, user_id, pid)
+
     # محدودیت افزودن لینک (مدیر معاف است).
     if not _limited(conn, chat_id, user_id, "item_create"):
         return
-
-    pl = current_playlist(conn, chat_id, user_id)
-    if pl is None:  # پلی‌لیست فعال نبود -> پلی‌لیست «پیش‌فرض» بساز
-        if not _limited(conn, chat_id, user_id, "playlist_create"):
-            bale.send_message(chat_id, "برای ذخیره یک پلی‌لیست محلی باز کنید "
-                                       "(حد مجاز ساختن پلی‌لیست رسیده است).")
-            return
-        pid = db.create_playlist(conn, user_id, "default")
-        ACTIVE[user_id] = pid
-        pl = db.get_playlist_by_id(conn, user_id, pid)
 
     bale.send_message(chat_id, "در حال دریافت اطلاعات…")
     title, description, image_url = scraper_fetch(url)
@@ -355,6 +418,39 @@ def handle_callback(cb):
         if pl:
             list_playlist_items(conn, chat_id, pl)
         bale.answer_callback_query(cb["id"])
+        return
+
+    if action in ("pickpl", "newpl", "cancel"):
+        pend = PENDING_LINKS.get(user_id, {})
+        if len(parts) < 2 or parts[1] not in pend:
+            bale.answer_callback_query(cb["id"], "این لینک دیگر در انتظار نیست.")
+            return
+        url = pend.pop(parts[1])
+        if not pend:
+            PENDING_LINKS.pop(user_id, None)
+        if action == "pickpl":
+            if len(parts) < 3:
+                return
+            pl = db.get_playlist_by_id(conn, user_id, int(parts[2]))
+            if not pl:
+                bale.answer_callback_query(cb["id"], "پلی‌لیست پیدا نشد.")
+                return
+            bale.answer_callback_query(cb["id"], "ذخیره می‌شود…")
+            bale.edit_message_text(chat_id, message_id, "در حال ذخیره…")
+            save_to_playlist(conn, chat_id, user_id, url, pl)
+            return
+        if action == "newpl":
+            PENDING[user_id] = ("newpl", url)
+            empty = {"inline_keyboard": []}
+            bale.edit_message_reply_markup(chat_id, message_id, empty)
+            bale.send_message(chat_id, "نام پلی‌لیست جدید را بنویسید:")
+            bale.answer_callback_query(cb["id"])
+            return
+        # cancel — فقط همین لینک لغو می‌شود.
+        empty = {"inline_keyboard": []}
+        bale.edit_message_reply_markup(chat_id, message_id, empty)
+        bale.send_message(chat_id, "ذخیره این لینک لغو شد ❌")
+        bale.answer_callback_query(cb["id"], "لغو شد.")
         return
 
     try:

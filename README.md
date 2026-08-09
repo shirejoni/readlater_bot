@@ -74,7 +74,7 @@ exempt from all limits.
 | Command | Action |
 |---|---|
 | */start*, */help* | Show help |
-| Send any link (or */add <url>*) | Scrape + save into the active playlist |
+| Send any link (or */add <url>*) | Pick which playlist to save it into (or create a new one). Multiple links can be queued at once. |
 | */new <name>* | Create (and open) a playlist |
 | */playlists* | List all playlists (tap one to open) |
 | */open <name>* | Make a playlist active and list its links |
