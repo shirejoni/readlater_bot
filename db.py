@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS items (
     url TEXT NOT NULL,
     title TEXT,
     description TEXT,
+    image_url TEXT,
     added_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'unread',
     pinned INTEGER NOT NULL DEFAULT 0
@@ -56,8 +57,16 @@ def connect(path=DB_PATH):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    migrate(conn)
     conn.commit()
     return conn
+
+
+def migrate(conn):
+    """Add any missing columns to DBs created by older versions."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
+    if "image_url" not in cols:
+        conn.execute("ALTER TABLE items ADD COLUMN image_url TEXT")
 
 
 # ---------- Playlists ----------
@@ -104,12 +113,14 @@ def delete_playlist(conn, chat_id, name):
 # ---------- Items ----------
 # Sort rule: pinned first, then oldest-first by added_at.
 
-def add_item(conn, chat_id, playlist_id, url, title=None, description=None):
+def add_item(conn, chat_id, playlist_id, url, title=None, description=None,
+             image_url=None):
     now = _now()
     cur = conn.execute(
         "INSERT INTO items (chat_id, playlist_id, url, title, description, "
-        "added_at, status, pinned) VALUES (?, ?, ?, ?, ?, ?, 'unread', 0)",
-        (chat_id, playlist_id, url, title, description, now))
+        "image_url, added_at, status, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, "
+        "'unread', 0)",
+        (chat_id, playlist_id, url, title, description, image_url, now))
     conn.commit()
     return cur.lastrowid
 

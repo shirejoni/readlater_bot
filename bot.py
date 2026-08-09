@@ -86,6 +86,27 @@ def item_text(item, index=None):
     return "\n".join(lines)
 
 
+def render_item(chat_id, item, index=None):
+    """Send an item: with its image (photo + caption + buttons) if available."""
+    text = item_text(item, index)
+    if item.get("image_url"):
+        bale.send_photo(chat_id, item["image_url"], caption=text,
+                        reply_markup=item_markup(item))
+    else:
+        bale.send_message(chat_id, text, reply_markup=item_markup(item))
+
+
+def render_edit(chat_id, message_id, item):
+    """Re-render an already-sent item after a callback (handles photo msgs)."""
+    text = item_text(item)
+    if item.get("image_url"):
+        bale.edit_message_caption(chat_id, message_id, text,
+                                  reply_markup=item_markup(item))
+    else:
+        bale.edit_message_text(chat_id, message_id, text,
+                               reply_markup=item_markup(item))
+
+
 def playlist_listing(conn, user_id):
     pls = db.list_playlists(conn, user_id)
     if not pls:
@@ -109,8 +130,7 @@ def list_playlist_items(conn, chat_id, pl):
         bale.send_message(chat_id, "خالی است. برای افزودن یک لینک بفرستید.")
         return
     for i, item in enumerate(items, 1):
-        bale.send_message(chat_id, item_text(item, i),
-                          reply_markup=item_markup(item))
+        render_item(chat_id, item, i)
 
 
 # ---------- مدیریت پیام و رویدادها ----------
@@ -294,13 +314,13 @@ def save_link(conn, chat_id, user_id, url):
         pl = db.get_playlist_by_id(conn, user_id, pid)
 
     bale.send_message(chat_id, "در حال دریافت اطلاعات…")
-    title, description = scraper_fetch(url)
+    title, description, image_url = scraper_fetch(url)
     item_id = db.add_item(conn, user_id, pl["id"], url,
-                          title=title, description=description)
+                          title=title, description=description,
+                          image_url=image_url)
     item = db.get_item(conn, user_id, item_id)
-    bale.send_message(chat_id,
-                      f"در *{md(pl['name'])}* ذخیره شد ✅\n\n{item_text(item)}",
-                      reply_markup=item_markup(item))
+    bale.send_message(chat_id, f"در *{md(pl['name'])}* ذخیره شد ✅")
+    render_item(chat_id, item)
 
 
 def scraper_fetch(url):
@@ -354,8 +374,13 @@ def handle_callback(cb):
         db.update_item_status(conn, item_id, parts[2])
     elif action == "remove":
         db.delete_item(conn, user_id, item_id)
-        bale.edit_message_text(chat_id, message_id, "*حذف شد* 🗑",
-                               reply_markup={"inline_keyboard": []})
+        empty = {"inline_keyboard": []}
+        if item.get("image_url"):
+            bale.edit_message_caption(chat_id, message_id, "*حذف شد* 🗑",
+                                      reply_markup=empty)
+        else:
+            bale.edit_message_text(chat_id, message_id, "*حذف شد* 🗑",
+                                   reply_markup=empty)
         bale.answer_callback_query(cb["id"], "حذف شد.")
         return
     elif action == "comment":
@@ -368,8 +393,7 @@ def handle_callback(cb):
 
     # بازنشانی کارت با وضعیت جدید.
     item = db.get_item(conn, user_id, item_id)
-    bale.edit_message_text(chat_id, message_id, item_text(item),
-                           reply_markup=item_markup(item))
+    render_edit(chat_id, message_id, item)
     bale.answer_callback_query(cb["id"])
 
 

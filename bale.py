@@ -57,6 +57,31 @@ def send_message(chat_id, text, reply_markup=None, parse_mode="Markdown",
     return call("sendMessage", token=token, **params)
 
 
+def send_photo(chat_id, photo, caption=None, reply_markup=None,
+               parse_mode="Markdown", token=None):
+    """Send a photo (file_id or URL); caption + buttons ride along."""
+    params = {"chat_id": chat_id, "photo": photo}
+    if caption:
+        params["caption"] = caption
+        params["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        params["reply_markup"] = reply_markup
+    return call("sendPhoto", token=token, **params)
+
+
+def edit_message_caption(chat_id, message_id, caption, reply_markup=None,
+                         parse_mode="Markdown", token=None):
+    params = {"chat_id": chat_id, "message_id": message_id,
+              "caption": caption, "parse_mode": parse_mode}
+    if reply_markup is not None:
+        params["reply_markup"] = reply_markup
+    try:
+        return call("editMessageCaption", token=token, **params)
+    except BaleError:
+        # Message content unchanged is fine; ignore.
+        return None
+
+
 def edit_message_text(chat_id, message_id, text, reply_markup=None,
                       parse_mode="Markdown", token=None):
     params = {"chat_id": chat_id, "message_id": message_id, "text": text,
