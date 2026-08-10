@@ -27,3 +27,15 @@ limits:
   commands:
     max: 300
     per: hour
+
+# Web dashboard (see webapp.py).
+# base_url is the public address used by the bot's /web command when it tells
+# a user where to log in (it appends /login).
+web:
+  base_url: http://avalbale.ir
+  # Path prefix under which the dashboard is served ("" = at the site root).
+  # The WSGI app strips this prefix and nginx proxies /readlater to it.
+  url_prefix: /readlater
+  # Set to true when serving over HTTPS so the session cookie gets the Secure
+  # flag (cookies will then not be sent over plain HTTP).
+  secure_cookie: false

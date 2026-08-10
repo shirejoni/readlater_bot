@@ -17,7 +17,8 @@ load_dotenv(BASE_DIR / ".env")
 BALE_TOKEN = os.environ.get("BALE_TOKEN")
 ADMIN_USER_ID = os.environ.get("ADMIN_USER_ID")
 if not BALE_TOKEN:
-    raise SystemExit("BALE_TOKEN is not set. Put it in the .env file.")
+    print("Warning: BALE_TOKEN is not set. The bot needs it in .env; "
+          "the web dashboard (webapp.py) works without it.")
 
 
 def is_admin(user_id):
@@ -33,6 +34,7 @@ DEFAULT_LIMITS = {
 }
 DEFAULT_PROXY = "http://127.0.0.1:2080"
 DEFAULT_BACKUP = {"enabled": True, "interval_hours": 24, "chat_id": ""}
+DEFAULT_WEB = {"base_url": "http://127.0.0.1:8000", "secure_cookie": False, "url_prefix": ""}
 
 _RAW = None  # parsed config.yaml dict (parsed once, cached)
 
@@ -87,3 +89,63 @@ def backup_chat_id():
     if BACKUP.get("chat_id"):
         return str(BACKUP["chat_id"])
     return str(ADMIN_USER_ID) if ADMIN_USER_ID else None
+
+
+def load_web():
+    """Web dashboard settings (base_url used by the bot's /web command)."""
+    w = dict(DEFAULT_WEB)
+    for key, val in (_raw_config().get("web") or {}).items():
+        if val is not None:
+            w[key] = val
+    return w
+
+
+WEB = load_web()
+
+
+def web_base_url():
+    """Public base URL of the web dashboard, e.g. http://127.0.0.1:8000."""
+    return str(WEB.get("base_url") or DEFAULT_WEB["base_url"]).rstrip("/")
+
+
+def web_secure_cookie():
+    """Whether the session cookie should carry the Secure flag (HTTPS only)."""
+    return bool(WEB.get("secure_cookie"))
+
+
+def web_url_prefix():
+    """URL prefix under which the dashboard is served, e.g. "/readlater".
+
+    Empty string (default) means the dashboard serves at the root. A non-empty
+    value (with leading slash, no trailing slash) is used both by the WSGI
+    prefix-stripping middleware in webapp.py and by nginx. The bot's /web
+    command appends this prefix to its login link.
+    """
+    p = str(WEB.get("url_prefix") or "").strip()
+    if p and not p.startswith("/"):
+        p = "/" + p
+    return p.rstrip("/")
+
+
+_WEB_SECRET = None
+
+
+def web_secret():
+    """JWT signing secret: WEB_SECRET env var, else a generated + persisted key.
+
+    The generated key lives in web_secret.key next to the DB so long-lived
+    session cookies survive restarts without further setup.
+    """
+    global _WEB_SECRET
+    if _WEB_SECRET is None:
+        secret = os.environ.get("WEB_SECRET") or ""
+        if not secret:
+            key_path = BASE_DIR / "web_secret.key"
+            if key_path.exists():
+                secret = key_path.read_text(encoding="utf-8").strip()
+            else:
+                import secrets
+                secret = secrets.token_urlsafe(32)
+                key_path.write_text(secret, encoding="utf-8")
+        _WEB_SECRET = secret
+    return _WEB_SECRET

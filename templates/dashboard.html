@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بعداً بخوانم</title>
+<meta name="color-scheme" content="dark">
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1e2230; --line:#2a2f42;
+    --txt:#e7e9f0; --muted:#9aa2b8; --accent:#6d8bff; --green:#3ecf8e;
+    --amber:#ffb454; --red:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Vazirmatn",Helvetica,Arial,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--line);
+         position:sticky;top:0;background:rgba(15,17,23,.88);backdrop-filter:blur(8px);z-index:10}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  header .sub{color:var(--muted);font-size:12px}
+  .spacer{flex:1}
+  button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:9px;
+         padding:8px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.ghost{background:transparent}
+  button.danger:hover{border-color:var(--red);color:var(--red)}
+  input,select,textarea{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+         border-radius:9px;padding:9px 11px;font-size:13px;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px;display:grid;grid-template-columns:250px 1fr;gap:20px}
+  @media (max-width:860px){.wrap{grid-template-columns:1fr}}
+  /* ---------- sidebar ---------- */
+  .sidebar{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;height:fit-content}
+  .side-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .side-head h2{font-size:13px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .side-head span{background:var(--panel2);border-radius:99px;padding:1px 9px;font-size:12px;color:var(--muted)}
+  ul.pls{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+  .pls li{display:flex;align-items:center;border-radius:9px;overflow:hidden}
+  .pls li.active{background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line)}
+  .pls a{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;
+         color:var(--txt);text-decoration:none;padding:9px 11px;border-radius:9px;min-width:0}
+  .pls a:hover{background:var(--panel2)}
+  .pls li.active a{color:var(--accent);font-weight:600}
+  .pls .cnt{color:var(--muted);font-size:12px;background:var(--panel);border-radius:99px;padding:0 8px}
+  .pls .delpl{border:none;background:transparent;color:var(--muted);padding:9px 11px;font-size:13px}
+  .pls .delpl:hover{color:var(--red)}
+  form.newpl{display:flex;gap:6px;margin-top:14px}
+  form.newpl input{flex:1;min-width:0}
+  /* ---------- main ---------- */
+  .pl-head{display:flex;flex-direction:column;gap:4px;margin-bottom:16px}
+  .pl-head h2{font-size:20px;margin:0}
+  .pl-head p.plc{margin:0;color:var(--muted);font-size:13px}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+        padding:14px;margin-bottom:12px;display:flex;gap:14px;transition:opacity .2s}
+  .item img.thumb{width:130px;height:96px;object-fit:cover;border-radius:10px;flex:none}
+  @media (max-width:560px){.item{flex-direction:column}.item img.thumb{width:100%;height:170px}}
+  .item .body{flex:1;min-width:0}
+  .item h3{margin:0 0 6px;font-size:15px;line-height:1.4}
+  .item h3 a{color:var(--txt);text-decoration:none}
+  .item h3 a:hover{color:var(--accent)}
+  .item .desc{color:var(--muted);font-size:13px;margin:0 0 8px;display:-webkit-box;
+              -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .item .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:10px}
+  .status{padding:2px 10px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
+  .status.st-unread{color:var(--muted)}
+  .status.st-in_progress{color:var(--amber);border-color:rgba(255,180,84,.4)}
+  .status.st-done{color:var(--green);border-color:rgba(62,207,142,.4)}
+  .item .actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .item .actions button{padding:6px 9px;font-size:14px;line-height:1}
+  .item .actions button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .status-group{display:inline-flex;gap:4px}
+  .status-group button{padding:6px 9px}
+  .pin.on{box-shadow:inset 0 0 0 1px var(--accent)}
+  details.comments{margin-right:auto}
+  details.comments summary{cursor:pointer;color:var(--muted);padding:6px 8px;border-radius:8px;list-style:none}
+  details.comments summary::-webkit-details-marker{display:none}
+  details.comments summary:hover{background:var(--panel2);color:var(--txt)}
+  details.comments[open] summary{border-bottom:1px dashed var(--line);border-radius:8px 8px 0 0}
+  details.comments .cmt{font-size:13px;padding:7px 3px;border-bottom:1px solid var(--line);color:var(--txt)}
+  details.comments .cmt .cmt-date{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+  details.comments form{display:flex;gap:6px;padding-top:8px}
+  details.comments form input{flex:1;min-width:0;padding:7px 10px}
+  .empty-muted{color:var(--muted);text-align:center;padding:60px 20px;background:var(--panel);
+               border:1px dashed var(--line);border-radius:14px}
+  /* ---------- toast & modal ---------- */
+  #toast{position:fixed;bottom:22px;right:50%;transform:translate(50%,80px);background:var(--panel2);
+         border:1px solid var(--line);color:var(--txt);padding:10px 18px;border-radius:10px;
+         font-size:13px;opacity:0;transition:.25s;z-index:100;pointer-events:none;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  #toast.show{opacity:1;transform:translate(50%,0)}
+  #toast.err{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.5);color:var(--red)}
+  #toast.warn{border-color:var(--amber)}
+  .modal{position:fixed;inset:0;background:rgba(5,7,12,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal.hidden{display:none}
+  .modal-box{width:100%;max-width:460px;background:var(--panel);border:1px solid var(--line);
+             border-radius:16px;padding:22px}
+  .modal-box h2{font-size:16px;margin:0 0 14px}
+  .modal-box textarea{width:100%;resize:vertical;margin-bottom:10px}
+  .modal-box select{width:100%;margin-bottom:14px}
+  .modal-box .row{display:flex;gap:8px}
+  .modal-box .row .primary{flex:1}
+  .modal-box #saveStatus{font-size:12px;color:var(--muted);min-height:16px;margin:10px 0 0}
+  .modal-box #saveStatus.err{color:var(--red)}
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 بعداً بخوانم</h1>
+  <span class="sub">هر کاربر فضای جداگانه‌ی خودش را دارد</span>
+  <div class="spacer"></div>
+  <button id="saveBtn" class="primary">➕ افزودن لینک</button>
+  <form method="post" action="{{ PREFIX }}/logout" style="margin:0">
+    <button type="submit" class="ghost">خروج</button>
+  </form>
+</header>
+
+<div id="toast"></div>
+
+<div class="wrap">
+  <aside class="sidebar">
+    <div class="side-head">
+      <h2>پلی‌لیست‌ها</h2>
+      <span>{{ playlists|length }}</span>
+    </div>
+    <ul class="pls">
+      {% for pl in playlists %}
+      <li class="{{ 'active' if pl.id == active_pid }}">
+        <a href="{{ PREFIX }}/?pl={{ pl.id }}">{{ pl.name }} <span class="cnt">{{ counts.get(pl.id, 0) }}</span></a>
+        <button class="delpl" data-pid="{{ pl.id }}" title="حذف پلی‌لیست">🗑</button>
+      </li>
+      {% endfor %}
+    </ul>
+    <form class="newpl" id="newplForm">
+      <input id="newplName" placeholder="پلی‌لیست جدید…" maxlength="50">
+      <button type="submit" class="primary">＋</button>
+    </form>
+  </aside>
+
+  <main>
+    {% if active %}
+    <div class="pl-head">
+      <h2>{{ active.name }}</h2>
+      {% if active.comment %}<p class="plc">{{ active.comment }}</p>{% endif %}
+    </div>
+
+    {% if items %}
+    {% for item in items %}
+    <article class="item" data-id="{{ item.id }}">
+      {% if item.image_url %}
+      <img class="thumb" src="{{ item.image_url }}" alt="" loading="lazy"
+           onerror="this.style.display='none'">
+      {% endif %}
+      <div class="body">
+        <h3><a href="{{ item.url }}" target="_blank" rel="noopener nofollow">{{ item.title or item.url }}</a></h3>
+        {% if item.description %}<p class="desc">{{ item.description }}</p>{% endif %}
+        <div class="meta">
+          <span class="status st-{{ item.status }}" data-status="{{ item.status }}">
+            {{ status_labels[item.status] }}
+          </span>
+          {% if item.pinned %}<span title="پین‌شده">📌</span>{% endif %}
+          <span>اضافه: {{ item.added_at[:10] }}</span>
+        </div>
+        <div class="actions">
+          <button class="pin {{ 'on' if item.pinned }}" title="پین / برداشتن پین">📌</button>
+          <span class="status-group">
+            <button data-s="unread" class="{{ 'on' if item.status == 'unread' }}" title="خوانده نشده">⬜</button>
+            <button data-s="in_progress" class="{{ 'on' if item.status == 'in_progress' }}" title="در حال خواندن">🔁</button>
+            <button data-s="done" class="{{ 'on' if item.status == 'done' }}" title="خوانده شد">✅</button>
+          </span>
+          <details class="comments">
+            <summary>💬{% if ccounts.get(item.id) %} ({{ ccounts[item.id] }}){% endif %}</summary>
+            {% for c in comments[item.id] %}
+            <div class="cmt">{{ c.text }}<span class="cmt-date">{{ c.created_at[:16].replace('T', ' ') }}</span></div>
+            {% else %}
+            <div class="cmt" style="color:var(--muted)">نظری نیست.</div>
+            {% endfor %}
+            <form class="cmt-form" data-kind="items" data-id="{{ item.id }}">
+              <input name="text" placeholder="نظر…" maxlength="400">
+              <button type="submit">ارسال</button>
+            </form>
+          </details>
+          <button class="del danger" title="حذف">🗑</button>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+    {% else %}
+    <p class="empty-muted">این پلی‌لیست خالی است. با دکمه‌ی «افزودن لینک» اولین لینک را ذخیره کنید.</p>
+    {% endif %}
+
+    {% else %}
+    <p class="empty-muted">هنوز پلی‌لیستی ندارید. از ستون کنار یک پلی‌لیست بسازید یا با «افزودن لینک» شروع کنید (پلی‌لیست «default» می‌سازد).</p>
+    {% endif %}
+  </main>
+</div>
+
+<div class="modal hidden" id="saveModal">
+  <div class="modal-box">
+    <h2>افزودن لینک</h2>
+    <textarea id="saveUrls" rows="3" placeholder="یک یا چند لینک — هر کدام در یک خط"></textarea>
+    <select id="savePl">
+      {% for pl in playlists %}
+      <option value="{{ pl.id }}" {{ 'selected' if pl.id == active_pid }}>{{ pl.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="row">
+      <button id="saveGo" class="primary">ذخیره</button>
+      <button id="saveCancel" class="ghost">انصراف</button>
+    </div>
+    {% if not playlists %}
+    <p id="saveStatus">هنوز پلی‌لیستی ندارید — پس از ذخیره، پلی‌لیست «default» ساخته می‌شود.</p>
+    {% else %}
+    <p id="saveStatus"></p>
+    {% endif %}
+  </div>
+</div>
+
+<script>window.APP_PREFIX = {{ PREFIX|tojson }};</script>
+<script src="{{ PREFIX }}/static/app.js"></script>
+</body>
+</html>

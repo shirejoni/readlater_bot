@@ -1,0 +1,20 @@
+[Unit]
+Description=Bale Read-Later web dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shirejoni
+Group=shirejoni
+WorkingDirectory=/home/shirejoni/ravan/readlater_bot
+# Shares the same SQLite DB (WAL) with the bot process.
+ExecStart=/home/shirejoni/ravan/readlater_bot/run_web.sh --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

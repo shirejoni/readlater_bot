@@ -83,6 +83,7 @@ exempt from all limits.
 | */plc <name> <text>* | Comment on a playlist |
 | */pc <item_id> <text>* | Comment on an item |
 | */comments* | Comment help |
+| */web* | Get a one-time 5-digit login code for the web dashboard |
 
 ## Sorting & status
 
@@ -91,11 +92,49 @@ exempt from all limits.
 - Each link has a three-state status: ⬜ Unread → 🔁 In Progress → ✅ Done.
 - Buttons on each card: Pin/Unpin, set status, Comment, Remove, Open the link.
 
+## Web dashboard
+
+A Flask web UI (`webapp.py`) that mirrors every bot feature with a modern RTL
+dark interface. It shares the bot's SQLite DB and rate limits, so a single
+daily cap applies across both bot and web.
+
+**Login (per-user link, no passwords)**
+
+1. Message the bot with `/web` — it replies with a **one-time 5-digit code**
+   (valid 10 minutes).
+2. Open the web app (default `http://127.0.0.1:8000`) and enter the code.
+3. You're signed in with an HttpOnly JWT session cookie, scoped to **your**
+   Bale user id — every user sees only their own playlists/links.
+
+Codes are single-use and per-user; the JWT signing secret comes from `WEB_SECRET`
+in `.env`, or is auto-generated into `web_secret.key` on first run.
+
+**Run it**
+
+```bash
+uv pip install -r requirements.txt
+./run_web.sh                # -> http://127.0.0.1:8000
+./run_web.sh --port 9000
+```
+
+Set `web.base_url` in `config.yaml` to the public address the bot should tell
+users to open (it appends `/login`). If you serve over HTTPS, also set
+`web.secure_cookie: true`. A systemd unit example lives in
+`readlater-web.service` (run alongside `readlater-bot`).
+
+What you can do in the UI: save one or many links at once (scraped
+server-side), pick or create the target playlist, pin, set read status
+(⬜/🔁/✅), comment on items and playlists, delete, create and delete
+playlists.
+
 ## Files
 
 - `bot.py` — polling loop, command & button routing, rate-limit enforcement
 - `bale.py` — thin Bale HTTP API client
-- `db.py` — SQLite schema + queries (incl. `rate_events` table)
+- `db.py` — SQLite schema + queries (incl. `rate_events` and `web_codes`)
 - `scraper.py` — link title/description extraction
-- `config.py` — loads `.env` (secrets) + `config.yaml` (limits)
+- `config.py` — loads `.env` (secrets) + `config.yaml` (limits, web)
 - `limits.py` — SQLite-backed sliding-window rate limiter
+- `webapp.py` — Flask dashboard: code login, JWT cookie, JSON API, dashboard
+- `templates/`, `static/` — dashboard UI (RTL Persian dark theme)
+- `run.sh` / `run_web.sh` — process launchers; `*.service` — systemd units

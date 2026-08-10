@@ -39,6 +39,8 @@ HELP = (
     "*نظرها*\n"
     "/plc <نام> <متن> — نظر روی پلی‌لیست\n"
     "/pc <شناسه> <متن> — نظر روی یک لینک\n\n"
+    "*ورود به سایت*\n"
+    "/web — دریافت کد ورود ۵ رقمی وب‌اپلیکیشن\n\n"
     "هر لینک دکمه دارد: پین، وضعیت (خوانده شد / در حال خواندن / خوانده نشده)، "
     "نظر، حذف و باز کردن.\n"
     "مرتب‌سازی: قدیمی‌تر اول؛ لینک‌های پین‌شده بالاترند."
@@ -284,6 +286,14 @@ def handle_command(conn, chat_id, user_id, text):
         bale.send_message(chat_id, "نظر ذخیره شد ✅")
     elif cmd == "/comments":
         show_comments_help(chat_id)
+    elif cmd == "/web":
+        code = db.create_login_code(conn, user_id)
+        url = config.web_base_url() + config.web_url_prefix() + "/login"
+        bale.send_message(
+            chat_id,
+            f"کد ورود شما: *`{code}`*\n\n"
+            f"در این صفحه وارد کنید: {url}\n"
+            "کد تا ۱۰ دقیقه معتبر است و فقط یک بار مصرف میشود.")
     else:
         bale.send_message(chat_id, "دستور ناشناخته است. /help را ببینید.")
 

@@ -3,7 +3,9 @@
 Everything is scoped per chat_id so the bot can be used independently in
 multiple chats without data leaking between them.
 """
+import random
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 DB_PATH = "readlater.db"
@@ -46,6 +48,15 @@ CREATE TABLE IF NOT EXISTS rate_events (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_user
     ON rate_events(user_id, bucket, ts);
+CREATE TABLE IF NOT EXISTS web_codes (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_web_code
+    ON web_codes(code);
 """
 
 
@@ -56,6 +67,13 @@ def _now():
 def connect(path=DB_PATH):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # WAL + busy timeout let the bot process and the web process share the
+    # same SQLite file without "database is locked" errors. foreign_keys=ON so
+    # deleting a playlist cascades to its items (fixes a latent bug where
+    # orphaned items lingered).
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
     conn.executescript(_SCHEMA)
     migrate(conn)
     conn.commit()
@@ -179,3 +197,32 @@ def list_comments(conn, entity_type, entity_id):
         "ORDER BY created_at",
         (entity_type, entity_id)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- Web login codes ----------
+# One-time 5-digit codes issued by the bot (/web command). A fresh code for a
+# user invalidates their previous one; consuming a code deletes its row so it
+# cannot be reused.
+
+def create_login_code(conn, user_id, ttl_minutes=10):
+    """Mint a new one-time 5-digit code for `user_id` (old codes revoked)."""
+    code = str(random.randrange(100000)).zfill(5)
+    conn.execute("DELETE FROM web_codes WHERE user_id = ?", (str(user_id),))
+    conn.execute(
+        "INSERT INTO web_codes (user_id, code, expires_at, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (str(user_id), code, time.time() + ttl_minutes * 60, _now()))
+    conn.commit()
+    return code
+
+
+def consume_login_code(conn, code):
+    """Validate + single-use consume a code. Returns the user_id or None."""
+    row = conn.execute(
+        "SELECT * FROM web_codes WHERE code = ? AND expires_at > ?",
+        (code, time.time())).fetchone()
+    if not row:
+        return None
+    conn.execute("DELETE FROM web_codes WHERE code = ?", (code,))
+    conn.commit()
+    return row["user_id"]
