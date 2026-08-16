@@ -103,7 +103,7 @@
   .modal-box #saveStatus.err{color:var(--red)}
 </style>
 </head>
-<body>
+<body data-view="{{ 'archive' if is_archive else 'playlist' }}">
 <header>
   <h1>📚 بعداً بخوانم</h1>
   <span class="sub">هر کاربر فضای جداگانه‌ی خودش را دارد</span>
@@ -129,6 +129,9 @@
         <button class="delpl" data-pid="{{ pl.id }}" title="حذف پلی‌لیست">🗑</button>
       </li>
       {% endfor %}
+      <li class="{{ 'active' if is_archive }}">
+        <a href="{{ PREFIX }}/?pl=archive">🗄 آرشیو <span class="cnt">{{ archived_count }}</span></a>
+      </li>
     </ul>
     <form class="newpl" id="newplForm">
       <input id="newplName" placeholder="پلی‌لیست جدید…" maxlength="50">
@@ -136,62 +139,81 @@
     </form>
   </aside>
 
-  <main>
-    {% if active %}
-    <div class="pl-head">
-      <h2>{{ active.name }}</h2>
-      {% if active.comment %}<p class="plc">{{ active.comment }}</p>{% endif %}
+  {% macro item_card(item, comments, ccounts, show_pl=False) %}
+<article class="item" data-id="{{ item.id }}">
+  {% if item.image_url %}
+  <img class="thumb" src="{{ item.image_url }}" alt="" loading="lazy"
+       onerror="this.style.display='none'">
+  {% endif %}
+  <div class="body">
+    <h3><a href="{{ item.url }}" target="_blank" rel="noopener nofollow">{{ item.title or item.url }}</a></h3>
+    {% if item.description %}<p class="desc">{{ item.description }}</p>{% endif %}
+    <div class="meta">
+      <span class="status st-{{ item.status }}" data-status="{{ item.status }}">
+        {{ status_labels[item.status] }}
+      </span>
+      {% if item.pinned %}<span title="پین‌شده">📌</span>{% endif %}
+      {% if show_pl and item.playlist_name %}<span title="پلی‌لیست مبدأ">📁 {{ item.playlist_name }}</span>{% endif %}
+      <span>اضافه: {{ item.added_at[:10] }}</span>
     </div>
+    <div class="actions">
+      <button class="pin {{ 'on' if item.pinned }}" title="پین / برداشتن پین">📌</button>
+      <span class="status-group">
+        <button data-s="unread" class="{{ 'on' if item.status == 'unread' }}" title="خوانده نشده">⬜</button>
+        <button data-s="in_progress" class="{{ 'on' if item.status == 'in_progress' }}" title="در حال خواندن">🔁</button>
+        <button data-s="done" class="{{ 'on' if item.status == 'done' }}" title="خوانده شد">✅</button>
+      </span>
+      <details class="comments">
+        <summary>💬{% if ccounts.get(item.id) %} ({{ ccounts[item.id] }}){% endif %}</summary>
+        {% for c in comments[item.id] %}
+        <div class="cmt">{{ c.text }}<span class="cmt-date">{{ c.created_at[:16].replace('T', ' ') }}</span></div>
+        {% else %}
+        <div class="cmt" style="color:var(--muted)">نظری نیست.</div>
+        {% endfor %}
+        <form class="cmt-form" data-kind="items" data-id="{{ item.id }}">
+          <input name="text" placeholder="نظر…" maxlength="400">
+          <button type="submit">ارسال</button>
+        </form>
+      </details>
+      <button class="del danger" title="حذف">🗑</button>
+    </div>
+  </div>
+</article>
+{% endmacro %}
 
-    {% if items %}
-    {% for item in items %}
-    <article class="item" data-id="{{ item.id }}">
-      {% if item.image_url %}
-      <img class="thumb" src="{{ item.image_url }}" alt="" loading="lazy"
-           onerror="this.style.display='none'">
-      {% endif %}
-      <div class="body">
-        <h3><a href="{{ item.url }}" target="_blank" rel="noopener nofollow">{{ item.title or item.url }}</a></h3>
-        {% if item.description %}<p class="desc">{{ item.description }}</p>{% endif %}
-        <div class="meta">
-          <span class="status st-{{ item.status }}" data-status="{{ item.status }}">
-            {{ status_labels[item.status] }}
-          </span>
-          {% if item.pinned %}<span title="پین‌شده">📌</span>{% endif %}
-          <span>اضافه: {{ item.added_at[:10] }}</span>
-        </div>
-        <div class="actions">
-          <button class="pin {{ 'on' if item.pinned }}" title="پین / برداشتن پین">📌</button>
-          <span class="status-group">
-            <button data-s="unread" class="{{ 'on' if item.status == 'unread' }}" title="خوانده نشده">⬜</button>
-            <button data-s="in_progress" class="{{ 'on' if item.status == 'in_progress' }}" title="در حال خواندن">🔁</button>
-            <button data-s="done" class="{{ 'on' if item.status == 'done' }}" title="خوانده شد">✅</button>
-          </span>
-          <details class="comments">
-            <summary>💬{% if ccounts.get(item.id) %} ({{ ccounts[item.id] }}){% endif %}</summary>
-            {% for c in comments[item.id] %}
-            <div class="cmt">{{ c.text }}<span class="cmt-date">{{ c.created_at[:16].replace('T', ' ') }}</span></div>
-            {% else %}
-            <div class="cmt" style="color:var(--muted)">نظری نیست.</div>
-            {% endfor %}
-            <form class="cmt-form" data-kind="items" data-id="{{ item.id }}">
-              <input name="text" placeholder="نظر…" maxlength="400">
-              <button type="submit">ارسال</button>
-            </form>
-          </details>
-          <button class="del danger" title="حذف">🗑</button>
-        </div>
-      </div>
-    </article>
-    {% endfor %}
-    {% else %}
-    <p class="empty-muted">این پلی‌لیست خالی است. با دکمه‌ی «افزودن لینک» اولین لینک را ذخیره کنید.</p>
-    {% endif %}
+<main>
+  {% if is_archive %}
+  <div class="pl-head">
+    <h2>🗄 آرشیو</h2>
+    <p class="plc">لینک‌هایی که «خوانده شد» زده‌اند اینجا جمع می‌شوند و دیگر در شمارش پلی‌لیست‌ها نیستند.</p>
+  </div>
 
-    {% else %}
-    <p class="empty-muted">هنوز پلی‌لیستی ندارید. از ستون کنار یک پلی‌لیست بسازید یا با «افزودن لینک» شروع کنید (پلی‌لیست «default» می‌سازد).</p>
-    {% endif %}
-  </main>
+  {% if archived %}
+  {% for item in archived %}
+  {{ item_card(item, comments, ccounts, show_pl=True) }}
+  {% endfor %}
+  {% else %}
+  <p class="empty-muted">آرشیو خالی است. هر لینکی که «خوانده شد» بزنید به اینجا می‌آید.</p>
+  {% endif %}
+
+  {% elif active %}
+  <div class="pl-head">
+    <h2>{{ active.name }}</h2>
+    {% if active.comment %}<p class="plc">{{ active.comment }}</p>{% endif %}
+  </div>
+
+  {% if items %}
+  {% for item in items %}
+  {{ item_card(item, comments, ccounts) }}
+  {% endfor %}
+  {% else %}
+  <p class="empty-muted">این پلی‌لیست خالی است. با دکمه‌ی «افزودن لینک» اولین لینک را ذخیره کنید.</p>
+  {% endif %}
+
+  {% else %}
+  <p class="empty-muted">هنوز پلی‌لیستی ندارید. از ستون کنار یک پلی‌لیست بسازید یا با «افزودن لینک» شروع کنید (پلی‌لیست «default» می‌سازد).</p>
+  {% endif %}
+</main>
 </div>
 
 <div class="modal hidden" id="saveModal">

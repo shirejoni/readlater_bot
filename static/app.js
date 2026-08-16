@@ -129,6 +129,10 @@ document.querySelectorAll(".item").forEach((card) => {
         card.querySelectorAll(".status-group button").forEach((b) =>
           b.classList.toggle("on", b.dataset.s === prev.st));
         flash(dataError(data, "خطا در تغییر وضعیت."), "err");
+      } else if (s === "done" || document.body.dataset.view === "archive") {
+        // Done (archived) items leave the playlist list; any status change in
+        // the archive view un-archives the item. Both need a re-render.
+        location.reload();
       }
     });
   });

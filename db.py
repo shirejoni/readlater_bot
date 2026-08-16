@@ -151,6 +151,40 @@ def list_items(conn, playlist_id):
     return [dict(r) for r in rows]
 
 
+# "done" items are archived: they no longer count toward a playlist's size and
+# are hidden from the normal listing. They surface in the archive view instead.
+
+def list_active_items(conn, playlist_id):
+    """Items of a playlist that are NOT archived (status != 'done')."""
+    rows = conn.execute(
+        "SELECT * FROM items WHERE playlist_id = ? AND status != 'done' "
+        "ORDER BY pinned DESC, added_at ASC",
+        (playlist_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_active_items(conn, playlist_id):
+    """Number of non-archived items in a playlist (shown on the UI)."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM items WHERE playlist_id = ? AND status != 'done'",
+        (playlist_id,)).fetchone()
+    return row["n"]
+
+
+def list_archived_items(conn, chat_id):
+    """All archived (status='done') items of a user, newest first.
+
+    Joins the playlist so the archive view can show where each link came from.
+    """
+    rows = conn.execute(
+        "SELECT i.*, p.name AS playlist_name FROM items i "
+        "JOIN playlists p ON p.id = i.playlist_id "
+        "WHERE i.chat_id = ? AND i.status = 'done' "
+        "ORDER BY i.pinned DESC, i.added_at DESC",
+        (chat_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_item(conn, chat_id, item_id):
     row = conn.execute(
         "SELECT * FROM items WHERE chat_id = ? AND id = ?",

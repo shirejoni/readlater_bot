@@ -35,7 +35,8 @@ HELP = (
     "/playlists — فهرست پلی‌لیست‌ها\n"
     "/open <نام> — فعال کردن و نمایش لینک‌های یک پلی‌لیست\n"
     "/list — نمایش لینک‌های پلی‌لیست فعال\n"
-    "/delpl <نام> — حذف پلی‌لیست\n\n"
+    "/delpl <نام> — حذف پلی‌لیست\n"
+    "/archive — آرشیو لینک‌های «خوانده شد» (از شمارش پلی‌لیست‌ها خارج‌اند)\n\n"
     "*نظرها*\n"
     "/plc <نام> <متن> — نظر روی پلی‌لیست\n"
     "/pc <شناسه> <متن> — نظر روی یک لینک\n\n"
@@ -79,7 +80,7 @@ def item_markup(item):
     }
 
 
-def item_text(item, index=None):
+def item_text(item, index=None, note=None):
     idx = f"[{index}] " if index else ""
     lines = [f"*{md(item['title'] or item['url'])}*"]
     if item["description"]:
@@ -88,12 +89,14 @@ def item_text(item, index=None):
     lines.append(f"#{item['id']} · {status_label(item['status'])}"
                  f"{' · 📌 پین‌شده' if item['pinned'] else ''}"
                  f" · اضافه: {item['added_at'][:10]} · {idx.strip()}")
+    if note:
+        lines.append(note)
     return "\n".join(lines)
 
 
-def render_item(chat_id, item, index=None):
+def render_item(chat_id, item, index=None, note=None):
     """Send an item: with its image (photo + caption + buttons) if available."""
-    text = item_text(item, index)
+    text = item_text(item, index, note)
     if item.get("image_url"):
         bale.send_photo(chat_id, item["image_url"], caption=text,
                         reply_markup=item_markup(item))
@@ -118,15 +121,18 @@ def playlist_listing(conn, user_id):
         return "هنوز پلی‌لیستی ندارید. با */new <نام>* بسازید.", None
     rows = []
     for pl in pls:
-        n = len(db.list_items(conn, pl["id"]))
+        n = db.count_active_items(conn, pl["id"])
         active = " 👈" if ACTIVE.get(user_id) == pl["id"] else ""
         rows.append([{"text": f"{pl['name']} ({n}){active}",
                       "callback_data": f"openpl:{pl['id']}"}])
+    n_arch = len(db.list_archived_items(conn, user_id))
+    rows.append([{"text": f"🗄 آرشیو ({n_arch})",
+                  "callback_data": "openpl:archive"}])
     return "*پلی‌لیست‌های شما:*", {"inline_keyboard": rows}
 
 
 def list_playlist_items(conn, chat_id, pl):
-    items = db.list_items(conn, pl["id"])
+    items = db.list_active_items(conn, pl["id"])
     header = f"*{md(pl['name'])}* — {len(items)} پیوند"
     if pl.get("comment"):
         header += f"\n📝 {md(pl['comment'])}"
@@ -136,6 +142,18 @@ def list_playlist_items(conn, chat_id, pl):
         return
     for i, item in enumerate(items, 1):
         render_item(chat_id, item, i)
+
+
+def list_archived(conn, chat_id, user_id):
+    """نمایش آرشیو (لینک‌های با وضعیت «خوانده شد»)."""
+    items = db.list_archived_items(conn, user_id)
+    if not items:
+        bale.send_message(chat_id, "آرشیو خالی است. لینک‌هایی که «خوانده شد» "
+                                   "بزنید اینجا جمع می‌شوند.")
+        return
+    bale.send_message(chat_id, f"🗄 *آرشیو* — {len(items)} پیوند خوانده‌شده")
+    for i, item in enumerate(items, 1):
+        render_item(chat_id, item, i, note=f"از {md(item['playlist_name'])}")
 
 
 # ---------- مدیریت پیام و رویدادها ----------
@@ -263,6 +281,8 @@ def handle_command(conn, chat_id, user_id, text):
         if ok and ACTIVE.get(user_id) is not None:
             ACTIVE.pop(user_id, None)
         bale.send_message(chat_id, "حذف شد ✅" if ok else "پلی‌لیست پیدا نشد.")
+    elif cmd == "/archive":
+        list_archived(conn, chat_id, user_id)
     elif cmd == "/plc":
         name, _, body = rest.partition(" ")
         if not name or not body:
@@ -334,7 +354,7 @@ def _pick_keyboard(conn, user_id, pls, token):
     """کیبورد انتخاب پلی‌لیست برای یک لینک؛ ژم داده‌ها token لینک + شناسه پلی‌لیست است."""
     rows = []
     for pl in pls:
-        n = len(db.list_items(conn, pl["id"]))
+        n = db.count_active_items(conn, pl["id"])
         rows.append([{"text": f"{pl['name']} ({n})",
                       "callback_data": f"pickpl:{token}:{pl['id']}"}])
     rows.append([{"text": "➕ پلی‌لیست جدید", "callback_data": f"newpl:{token}"},
@@ -422,6 +442,10 @@ def handle_callback(cb):
     action = parts[0]
 
     if action == "openpl":
+        if parts[1] == "archive":
+            bale.answer_callback_query(cb["id"])
+            list_archived(conn, chat_id, user_id)
+            return
         pid = int(parts[1])
         ACTIVE[user_id] = pid
         pl = db.get_playlist_by_id(conn, user_id, pid)
@@ -478,6 +502,20 @@ def handle_callback(cb):
         db.toggle_pin(conn, item_id)
     elif action == "st" and len(parts) == 3:
         db.update_item_status(conn, item_id, parts[2])
+        if parts[2] == "done":
+            # «خوانده شد» یعنی آرشیو: کارت را به یک پیام تأیید تبدیل می‌کنیم تا
+            # از فهرستِ پلی‌لیست جمع شود و در آرشیو دیده شود.
+            empty = {"inline_keyboard": []}
+            if item.get("image_url"):
+                bale.edit_message_caption(chat_id, message_id,
+                                          "*به آرشیو منتقل شد* 🗄\n/archive را ببینید.",
+                                          reply_markup=empty)
+            else:
+                bale.edit_message_text(chat_id, message_id,
+                                       "*به آرشیو منتقل شد* 🗄\n/archive را ببینید.",
+                                       reply_markup=empty)
+            bale.answer_callback_query(cb["id"], "به آرشیو منتقل شد ✅")
+            return
     elif action == "remove":
         db.delete_item(conn, user_id, item_id)
         empty = {"inline_keyboard": []}

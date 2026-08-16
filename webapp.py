@@ -218,25 +218,39 @@ def dashboard():
     uid = g.user_id
     playlists = db.list_playlists(conn, uid)
 
-    pid = request.args.get("pl", type=int)
-    if pid not in [p["id"] for p in playlists]:
-        pid = playlists[0]["id"] if playlists else None
+    view = request.args.get("pl")
+    is_archive = view == "archive"
+    active = None
+    if not is_archive:
+        try:
+            pid = int(view) if view else None
+        except ValueError:
+            pid = None
+        if pid not in [p["id"] for p in playlists]:
+            pid = playlists[0]["id"] if playlists else None
+        active = next((p for p in playlists if p["id"] == pid), None)
 
-    active = next((p for p in playlists if p["id"] == pid), None)
+    counts = {p["id"]: db.count_active_items(conn, p["id"]) for p in playlists}
+    archived_count = len(db.list_archived_items(conn, uid))
 
-    counts = {p["id"]: len(db.list_items(conn, p["id"])) for p in playlists}
-    items, comments, ccounts = [], {}, {}
-    if active:
-        items = db.list_items(conn, active["id"])
+    items, archived, comments, ccounts = [], [], {}, {}
+    if is_archive:
+        archived = db.list_archived_items(conn, uid)
+        comments = {it["id"]: db.list_comments(conn, "item", it["id"])
+                    for it in archived}
+        ccounts = {it["id"]: len(comments[it["id"]]) for it in archived}
+    elif active:
+        items = db.list_active_items(conn, active["id"])
         comments = {it["id"]: db.list_comments(conn, "item", it["id"])
                     for it in items}
         ccounts = {it["id"]: len(comments[it["id"]]) for it in items}
 
     return render_template(
         "dashboard.html",
-        playlists=playlists, active=active, active_pid=pid,
-        items=items, counts=counts, comments=comments, ccounts=ccounts,
-        status_labels=STATUS_LABELS,
+        playlists=playlists, active=active, active_pid=(active or {}).get("id"),
+        items=items, archived=archived, archived_count=archived_count,
+        is_archive=is_archive, counts=counts, comments=comments,
+        ccounts=ccounts, status_labels=STATUS_LABELS,
         limit_playlist=config.LIMITS.get("playlist_create"),
         limit_item=config.LIMITS.get("item_create"))
 

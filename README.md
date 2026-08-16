@@ -80,6 +80,7 @@ exempt from all limits.
 | */open <name>* | Make a playlist active and list its links |
 | */list* | List links in the active playlist |
 | */delpl <name>* | Delete a playlist |
+| */archive* | List archived (✅ done) links — also a "🗄 آرشیو" button in */playlists* |
 | */plc <name> <text>* | Comment on a playlist |
 | */pc <item_id> <text>* | Comment on an item |
 | */comments* | Comment help |
@@ -90,6 +91,10 @@ exempt from all limits.
 - Default order is **oldest-first** by date added.
 - **Pinned** (📌) links sort to the top.
 - Each link has a three-state status: ⬜ Unread → 🔁 In Progress → ✅ Done.
+- Marking a link **✅ Done archives it**: it stops counting toward the
+  playlist's item count, disappears from the normal listing, and shows under
+  the **🗄 Archive** view (bot: `/archive`, web: the archive entry in the
+  sidebar). Changing its status out of "Done" returns it to the playlist.
 - Buttons on each card: Pin/Unpin, set status, Comment, Remove, Open the link.
 
 ## Web dashboard
